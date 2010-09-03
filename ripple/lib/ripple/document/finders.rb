@@ -45,20 +45,29 @@ module Ripple
         #   Find a single document.
         #   @param [String] key the key of a document to find
         #   @return [Document] the found document, or nil
-        # @overload find(key1, key2, ...)
+        # @overload find(:where, cond...)
         #   Find a list of documents.
-        #   @param [String] key1 the key of a document to find
-        #   @param [String] key2 the key of a document to find
+        #   @param [Symbol] where the position to find the document in
+        #   @param [Hash] cond the conditions to satisfy
         #   @return [Array<Document>] a list of found documents, including nil for missing documents
-        # @overload find(keylist)
-        #   Find a list of documents.
-        #   @param [Array<String>] keylist an array of keys to find
-        #   @return [Array<Document>] a list of found documents, including nil for missing documents
+        # If a String is provided, it will be assumed that it is a key and will 
+        # attempt to find a single Document based on that id. If a Symbol and 
+        # Hash is provided then it will attempt to find either a single 
+        # Document or multiples based on the conditions provided and the first
+        # parameter.
+        #
+        # <tt>Person.find(:first, :conditions => { :attribute => "value" })</tt>
+        #
+        # <tt>Person.find(:all, :conditions => { :attribute => "value" })</tt>
         def find(*args)
-          args.flatten!
-          return nil if args.empty? || args.all?(&:blank?)
-          return find_one(args.first) if args.one?
-          args.map {|key| find_one(key) }
+          raise Errors::InvalidOptions.new("Calling Document#find with nil is invalid") if args[0].nil?
+          type = args.delete_at(0) if args[0].is_a?(Symbol)
+          case type
+            when :first then return all(*args)[0]
+            when :last then return criteria.last
+          else
+            return all(*args)
+          end
         end
         
         # Retrieve single or multiple documents from Riak
@@ -116,6 +125,10 @@ module Ripple
         end
 
         private
+        def find_or(method, attrs = {})
+          first(:conditions => attrs) || send(method, attrs)
+        end
+        
         def query(hash)
           str = ""
           hash.each{|k,v| str << "data[0].#{k} == '#{v}' && "}
