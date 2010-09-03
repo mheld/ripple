@@ -74,7 +74,7 @@ module Ripple
         # bucket's keys using find. You should not expect to 
         # actually get the first object you added to the bucket.
         # This is just a convenience method.
-        def first
+        def first(*args)
           find(bucket.keys.first)
         end
         
@@ -91,24 +91,51 @@ module Ripple
         # @overload all() {|doc| ... }
         #   Stream all documents in the bucket through the block.
         #   @yield [Document] doc a found document
-        def all
-          if block_given?
-            bucket.keys do |keys|
-              keys.each do |key|
-                obj = find_one(key)
-                yield obj if obj
+        # @overload all(:conditions => {conditions})
+        #   Gets all documents that satisfy the given conditions
+        #   @return [Array<Document>] all found documents in the bucket
+        def all(args = {})
+          if args.length == 0
+            if block_given?
+              bucket.keys do |keys|
+                keys.each do |key|
+                  obj = find_one(key)
+                  yield obj if obj
+                end
+              end
+              []
+            else
+              bucket.keys.inject([]) do |acc, k|
+                obj = find_one(k)
+                obj ? acc << obj : acc
               end
             end
-            []
           else
-            bucket.keys.inject([]) do |acc, k|
-              obj = find_one(k)
-              obj ? acc << obj : acc
-            end
+            objectize(query(args[:conditions]))
           end
         end
 
         private
+        def query(hash)
+          str = ""
+          hash.each{|k,v| str << "data[0].#{k} == '#{v}' && "}
+          str << "true"
+          mr = Riak::MapReduce.new(Ripple.client)
+          .add(self.bucket)
+          .map("function(v){ var data = Riak.mapValuesJson(v); if(#{str}){return [data];}else{return [];}}",
+          :keep => true)
+          mr.run[0] || []
+        end
+
+        # converts arrays to objects, assuming that _type is the name of the class to create
+        # ar - an array of hashes returned by
+        def objectize(ar)
+          ar.map do |e|
+            klass = e["_type"]
+            klass.constantize.new(e.except(klass))
+          end
+        end
+        
         def find_one(key)
           instantiate(bucket.get(key, quorums.slice(:r)))
         rescue Riak::FailedRequest => fr
